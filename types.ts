@@ -13,28 +13,31 @@ export enum SchoolType {
   Aided = 'Aided/Government'
 }
 
+export type ApplicationStatus = 'planning' | 'applied' | 'interviewing' | 'accepted' | 'waitlisted' | 'rejected';
+
 export interface School {
   id: string;
   name: string;
   nameZh: string;
   location: string;
-  district: string; // New field for HK District
+  district: string;
   tuitionFee: string;
   curriculum: Curriculum[];
   language: string[];
   type: SchoolType;
-  ranking: number; // Overall ranking
-  categoryRanking?: number; // Ranking within its specific curriculum
-  applicationStart: string; // ISO Date
-  applicationEnd: string;   // ISO Date
-  interviewDate: string;   // Estimated window
+  ranking: number;
+  categoryRanking?: number;
+  applicationStart: string;
+  applicationEnd: string;
+  interviewDate: string;
   description: string;
-  website: string; // Official school website
-  interviewRequirements: string; // Capabilities required
-  interviewTips: string; // Experience and precautions
+  website: string;
+  interviewRequirements: string;
+  interviewTips: string;
 }
 
-export interface UserReminder {
+export interface UserProgress {
   schoolId: string;
-  status: 'interested' | 'applied' | 'interview_scheduled';
+  status: ApplicationStatus;
+  updatedAt: string;
 }
