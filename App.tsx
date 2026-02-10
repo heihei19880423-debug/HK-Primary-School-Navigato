@@ -8,13 +8,19 @@ import AIAssistant from './components/AIAssistant';
 import SchoolForm from './components/SchoolForm';
 import ComparisonDrawer from './components/ComparisonDrawer';
 import DistrictExplorer from './components/DistrictExplorer';
+import { monitorSchoolAdmissions } from './services/geminiService';
 import * as XLSX from 'xlsx';
 
 const App: React.FC = () => {
   const [customSchools, setCustomSchools] = useState<School[]>([]);
   const [followedIds, setFollowedIds] = useState<string[]>([]);
+  const [monitoredIds, setMonitoredIds] = useState<string[]>([]);
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const [progress, setProgress] = useState<Record<string, ApplicationStatus>>({});
+  const [schoolNotes, setSchoolNotes] = useState<Record<string, string>>({});
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncLog, setSyncLog] = useState<string | null>(null);
+  
   const [viewMode, setViewMode] = useState<'list' | 'district'>('list');
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState<'All' | Curriculum>('All');
@@ -31,11 +37,17 @@ const App: React.FC = () => {
     const savedFollowed = localStorage.getItem('hk_followed_schools');
     if (savedFollowed) setFollowedIds(JSON.parse(savedFollowed));
 
+    const savedMonitored = localStorage.getItem('hk_monitored_schools');
+    if (savedMonitored) setMonitoredIds(JSON.parse(savedMonitored));
+
     const savedCustom = localStorage.getItem('hk_custom_schools');
     if (savedCustom) setCustomSchools(JSON.parse(savedCustom));
 
     const savedProgress = localStorage.getItem('hk_school_progress');
     if (savedProgress) setProgress(JSON.parse(savedProgress));
+
+    const savedNotes = localStorage.getItem('hk_school_notes');
+    if (savedNotes) setSchoolNotes(JSON.parse(savedNotes));
 
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
@@ -43,6 +55,16 @@ const App: React.FC = () => {
   const allSchools = useMemo(() => {
     return [...HK_SCHOOLS, ...customSchools];
   }, [customSchools]);
+
+  // Cleaner for sync logs
+  const cleanMarkdown = (text: string) => {
+    return text
+      .replace(/\*\*/g, '')
+      .replace(/\*/g, '')
+      .replace(/###/g, '')
+      .replace(/##/g, '')
+      .replace(/#/g, '');
+  };
 
   const toggleFollow = (id: string) => {
     const isNowFollowing = !followedIds.includes(id);
@@ -52,35 +74,39 @@ const App: React.FC = () => {
     if (isNowFollowing && !progress[id]) updateProgress(id, 'planning');
   };
 
+  const toggleMonitor = (id: string) => {
+    const updated = monitoredIds.includes(id) 
+      ? monitoredIds.filter(mid => mid !== id)
+      : [...monitoredIds, id];
+    setMonitoredIds(updated);
+    localStorage.setItem('hk_monitored_schools', JSON.stringify(updated));
+  };
+
   const updateProgress = (id: string, status: ApplicationStatus) => {
     const newProgress = { ...progress, [id]: status };
     setProgress(newProgress);
     localStorage.setItem('hk_school_progress', JSON.stringify(newProgress));
   };
 
-  const toggleCompare = (id: string) => {
-    setCompareIds(prev => {
-      if (prev.includes(id)) return prev.filter(i => i !== id);
-      if (prev.length >= 3) {
-        alert("最多只能同时对比 3 所学校");
-        return prev;
-      }
-      return [...prev, id];
-    });
+  const updateNote = (id: string, note: string) => {
+    const newNotes = { ...schoolNotes, [id]: note };
+    setSchoolNotes(newNotes);
+    localStorage.setItem('hk_school_notes', JSON.stringify(newNotes));
   };
 
-  const handleAddSchool = (newSchool: School) => {
-    const updated = [...customSchools, newSchool];
-    setCustomSchools(updated);
-    localStorage.setItem('hk_custom_schools', JSON.stringify(updated));
-    setIsFormOpen(false);
+  const handleGlobalSync = async () => {
+    if (monitoredIds.length === 0) {
+      alert("请先在学校卡片上开启‘官网监控’开关。");
+      return;
+    }
+    setIsSyncing(true);
+    const monitoredSchools = allSchools.filter(s => monitoredIds.includes(s.id));
+    const names = monitoredSchools.map(s => s.nameZh);
+    
+    const result = await monitorSchoolAdmissions(names);
+    setSyncLog(result ? cleanMarkdown(result) : "监控同步未发现明显更新。");
+    setIsSyncing(false);
   };
-
-  const allDistricts = useMemo(() => {
-    const districts = new Set<string>();
-    allSchools.forEach(s => districts.add(s.district));
-    return Array.from(districts).sort();
-  }, [allSchools]);
 
   const filteredSchools = useMemo(() => {
     let result = [...allSchools];
@@ -113,62 +139,95 @@ const App: React.FC = () => {
           </div>
           
           <div className="flex items-center gap-4 flex-1 justify-end max-w-3xl">
-            <div className="relative flex-1 max-w-md hidden md:block">
+            <div className="relative flex-1 max-w-md hidden md:block group">
               <input 
                 type="text" 
-                placeholder="搜索 100 所名校、区域、课程..."
-                className="bg-slate-200/50 hover:bg-slate-200 border-none rounded-2xl px-5 py-2.5 text-sm w-full focus:ring-2 focus:ring-indigo-500/20 focus:bg-white outline-none font-medium transition-all"
+                placeholder="🔍 输入学校中文或英文名称直接搜索..."
+                className="bg-slate-200/50 hover:bg-slate-200 border-2 border-transparent rounded-2xl px-5 py-2.5 text-sm w-full focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500/20 focus:bg-white outline-none font-bold transition-all"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
-              <svg className="w-4 h-4 absolute right-4 top-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
             </div>
-            <div className="flex bg-slate-200/50 p-1 rounded-2xl border border-slate-200/50">
-               <button onClick={() => setViewMode('list')} className={`px-4 py-1.5 rounded-xl text-xs font-black transition-all ${viewMode === 'list' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>列表</button>
-               <button onClick={() => setViewMode('district')} className={`px-4 py-1.5 rounded-xl text-xs font-black transition-all ${viewMode === 'district' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>区域</button>
-            </div>
+            <button 
+              onClick={handleGlobalSync}
+              disabled={isSyncing}
+              className={`bg-emerald-600 text-white px-5 py-2.5 rounded-2xl text-xs font-black flex items-center gap-2 hover:bg-emerald-700 shadow-lg transition-all ${isSyncing ? 'animate-pulse' : ''}`}
+            >
+              {isSyncing ? '同步官网动态...' : '🚀 官网监控同步'}
+            </button>
             <button onClick={() => setIsFormOpen(true)} className="bg-slate-900 text-white px-5 py-2.5 rounded-2xl text-xs font-black flex items-center gap-2 hover:bg-slate-800 shadow-lg active:scale-95 transition-all">+ 新增</button>
           </div>
         </div>
       </header>
 
       <main className="max-w-7xl mx-auto px-6 pt-32">
+        {syncLog && (
+          <div className="mb-8 bg-emerald-50 border border-emerald-100 p-6 rounded-[2rem] animate-fadeIn relative">
+            <button onClick={() => setSyncLog(null)} className="absolute top-4 right-4 text-emerald-400 hover:text-emerald-600">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M6 18L18 6M6 6l12 12" /></svg>
+            </button>
+            <h4 className="text-sm font-black text-emerald-800 uppercase tracking-widest mb-3 flex items-center gap-2">
+              <span className="w-2 h-2 bg-emerald-500 rounded-full animate-ping"></span>
+              监控报告 (官网动态)
+            </h4>
+            <div className="text-xs text-emerald-700 leading-relaxed whitespace-pre-wrap font-medium">
+              {syncLog}
+            </div>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
           <div className="lg:col-span-8 space-y-8">
             <Dashboard followedSchools={followedSchools} progress={progress} />
 
-            <div className="flex items-center justify-between">
-               <div className="bg-white p-1.5 rounded-2xl border border-slate-200 flex overflow-x-auto shadow-sm no-scrollbar">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="bg-white p-1.5 rounded-2xl border border-slate-200 flex overflow-x-auto shadow-sm no-scrollbar">
                 {['All', ...Object.values(Curriculum)].map(tab => (
-                  <button key={tab} onClick={() => setActiveTab(tab as any)} className={`px-6 py-2.5 text-xs font-black rounded-xl transition-all ${activeTab === tab ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>
+                  <button key={tab} onClick={() => setActiveTab(tab as any)} className={`px-6 py-2.5 text-xs font-black rounded-xl transition-all whitespace-nowrap ${activeTab === tab ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-500 hover:bg-slate-50'}`}>
                     {tab === 'All' ? '全港综合' : tab}
                   </button>
                 ))}
               </div>
-              <div className="hidden sm:flex items-center gap-2 bg-white border border-slate-200 rounded-2xl px-4 py-2 shadow-sm">
-                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">排序:</span>
-                <select value={sortBy} onChange={(e) => setSortBy(e.target.value as any)} className="bg-transparent text-xs font-black text-slate-700 outline-none cursor-pointer">
-                  <option value="rank">按全港排名</option>
-                  <option value="deadline">按报名截止</option>
-                </select>
+              
+              <div className="md:hidden">
+                 <input 
+                  type="text" 
+                  placeholder="搜索学校..."
+                  className="bg-white border border-slate-200 rounded-2xl px-5 py-2.5 text-sm w-full outline-none font-bold shadow-sm"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
               </div>
             </div>
 
-            {viewMode === 'list' ? (
-              <div className="grid grid-cols-1 gap-6 animate-fadeIn">
-                <div className="flex items-center justify-between px-2">
-                   <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">找到 {filteredSchools.length} 所学校符合条件</h3>
-                   {selectedDistrict !== 'All' && (
-                     <button onClick={() => setSelectedDistrict('All')} className="text-[10px] font-black text-indigo-600 uppercase hover:underline">清除区域筛选 ×</button>
-                   )}
+            <div className="grid grid-cols-1 gap-6 animate-fadeIn">
+              {filteredSchools.length > 0 ? (
+                filteredSchools.map(school => (
+                  <SchoolCard 
+                    key={school.id} 
+                    school={school} 
+                    isFollowing={followedIds.includes(school.id)} 
+                    isMonitored={monitoredIds.includes(school.id)}
+                    isComparing={compareIds.includes(school.id)} 
+                    currentStatus={progress[school.id]} 
+                    note={schoolNotes[school.id] || ''}
+                    onFollow={toggleFollow} 
+                    onMonitor={toggleMonitor}
+                    onCompare={(id) => setCompareIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id])} 
+                    onUpdateStatus={updateProgress} 
+                    onUpdateNote={updateNote}
+                  />
+                ))
+              ) : (
+                <div className="bg-white rounded-[2rem] p-12 text-center border-2 border-dashed border-slate-100">
+                  <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <svg className="w-8 h-8 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                  </div>
+                  <h3 className="text-slate-800 font-black text-lg">未找到匹配的学校</h3>
+                  <p className="text-slate-400 text-sm mt-1">请尝试更换关键词，或者点击右上角“新增”自行添加。</p>
                 </div>
-                {filteredSchools.map(school => (
-                  <SchoolCard key={school.id} school={school} isFollowing={followedIds.includes(school.id)} isComparing={compareIds.includes(school.id)} currentStatus={progress[school.id]} onFollow={toggleFollow} onCompare={toggleCompare} onUpdateStatus={updateProgress} />
-                ))}
-              </div>
-            ) : (
-              <DistrictExplorer schools={filteredSchools} onSelectSchool={(s) => { setSearchTerm(s.nameZh); setViewMode('list'); }} />
-            )}
+              )}
+            </div>
           </div>
 
           <div className="lg:col-span-4">
@@ -177,25 +236,19 @@ const App: React.FC = () => {
                 <div className="flex items-center justify-between mb-8">
                   <h3 className="font-black text-slate-800 text-sm uppercase tracking-widest flex items-center">
                     <span className="w-3 h-3 bg-indigo-600 rounded-full mr-3 shadow-lg shadow-indigo-200"></span>
-                    AI 升学智库
+                    AI 监控顾问
                   </h3>
-                  <span className="text-[10px] bg-emerald-100 text-emerald-600 px-2 py-0.5 rounded-full font-black">在线联网</span>
+                  <span className="text-[10px] bg-emerald-100 text-emerald-600 px-2 py-0.5 rounded-full font-black">ACTIVE</span>
                 </div>
                 <AIAssistant schools={allSchools} />
-              </div>
-              
-              <div className="bg-gradient-to-br from-indigo-600 to-violet-700 rounded-[2.5rem] p-8 text-white shadow-xl">
-                 <h4 className="font-black text-lg mb-2">准备好面试了吗？</h4>
-                 <p className="text-white/80 text-xs leading-relaxed mb-6 font-medium">我们的 AI 顾问可以为您生成针对特定名校的模拟面试问题。</p>
-                 <button className="w-full bg-white text-indigo-600 py-3 rounded-2xl text-xs font-black shadow-lg hover:bg-slate-50 transition-all">开启模拟面试</button>
               </div>
             </div>
           </div>
         </div>
       </main>
 
-      <ComparisonDrawer comparedSchools={comparedSchools} onRemove={toggleCompare} />
-      {isFormOpen && <SchoolForm onClose={() => setIsFormOpen(false)} onSubmit={handleAddSchool} existingRankCount={allSchools.length} />}
+      <ComparisonDrawer comparedSchools={comparedSchools} onRemove={(id) => setCompareIds(prev => prev.filter(i => i !== id))} />
+      {isFormOpen && <SchoolForm onClose={() => setIsFormOpen(false)} onSubmit={(s) => { setCustomSchools([...customSchools, s]); setIsFormOpen(false); }} existingRankCount={allSchools.length} />}
     </div>
   );
 };

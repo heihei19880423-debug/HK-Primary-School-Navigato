@@ -34,6 +34,10 @@ export interface School {
   website: string;
   interviewRequirements: string;
   interviewTips: string;
+  notes?: string;
+  // 监控相关字段
+  isMonitored?: boolean;
+  lastVerified?: string;
 }
 
 export interface UserProgress {

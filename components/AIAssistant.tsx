@@ -19,10 +19,20 @@ const AIAssistant: React.FC<AIAssistantProps> = ({ schools }) => {
     }
   }, [response]);
 
+  // Utility to strip common Markdown characters to keep the output clean as requested
+  const cleanMarkdown = (text: string) => {
+    return text
+      .replace(/\*\*/g, '') // Remove bold
+      .replace(/\*/g, '')   // Remove italic/bullets
+      .replace(/###/g, '')  // Remove H3
+      .replace(/##/g, '')   // Remove H2
+      .replace(/#/g, '');   // Remove remaining hashes
+  };
+
   const handleAsk = async () => {
     if (!query.trim()) return;
     setLoading(true);
-    setResponse(null); // Clear previous to show thinking
+    setResponse(null); 
     
     const context = `
       Current School Database has 100 top HK primary schools including: 
@@ -32,7 +42,8 @@ const AIAssistant: React.FC<AIAssistantProps> = ({ schools }) => {
     `;
     
     const result = await askGeminiAboutAdmissions(query, context);
-    setResponse(result || "抱歉，目前无法获取回复。");
+    // Clean the result before setting it to state
+    setResponse(result ? cleanMarkdown(result) : "抱歉，目前无法获取回复。");
     setLoading(false);
   };
 
